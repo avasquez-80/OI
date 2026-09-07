@@ -147,11 +147,12 @@ def registrar_o_actualizar_contrato(ticker_symbol, expiry_date, strike_price, ti
             enviar_alerta_telegram(mensaje_telegram)
 
         # ==========================================
-        # NUEVO: VALIDACIÓN PARA EVITAR REGISTROS DUPLICADOS
+        # VALIDACIÓN MEJORADA CONTRA MERCADO CERRADO / FERIADOS
         # ==========================================
         if not datos_previos.empty:
             ultimo_reg = datos_previos.iloc[-1]
             ultimo_oi = int(ultimo_reg['Open Interest']) if pd.notna(ultimo_reg['Open Interest']) else 0
+            ultimo_vol = int(ultimo_reg['Volume']) if pd.notna(ultimo_reg['Volume']) else 0
             ultima_prima = float(ultimo_reg['Premium ($)']) if pd.notna(ultimo_reg['Premium ($)']) else 0.0
             ultima_fecha = str(ultimo_reg['Trade Date']).split(' ')[0]
 
@@ -160,9 +161,10 @@ def registrar_o_actualizar_contrato(ticker_symbol, expiry_date, strike_price, ti
                 print(f"ℹ️ Ya existe un registro para hoy ({hoy}). Omitiendo duplicado.")
                 return True
 
-            # 2. Si el mercado está cerrado y los valores son idénticos al último cierre, se omite
-            if ultimo_oi == oi_actual and ultima_prima == round(premium_diario, 2):
-                print(f"ℹ️ Sin cambios en OI ({oi_actual}) ni Prima (${premium_diario:,.2f}) respecto al último registro. Omitiendo por inactividad.")
+            # 2. Si el mercado está cerrado (Feriado/Fin de semana) y tanto el OI, 
+            # el volumen como la prima no muestran actividad real nueva respecto al cierre previo:
+            if ultimo_oi == oi_actual and ultimo_vol == vol_actual and ultima_prima == round(premium_diario, 2):
+                print(f"ℹ️ Sin cambios en el mercado (posible día festivo/cerrado). Omitiendo.")
                 return True
 
         # 4. Guardar registro en la base de datos
@@ -352,6 +354,13 @@ def graficar_todas_las_tendencias():
     root = tk.Tk()
     root.title("Tendencias Históricas - Open Interest y Primas")
     root.geometry("1100x750")
+
+    # Función para cerrar limpiamente y devolver control a la terminal
+    def cerrar_ventana():
+        root.quit()
+        root.destroy()
+
+    root.protocol("WM_DELETE_WINDOW", cerrar_ventana)
 
     main_frame = tk.Frame(root)
     main_frame.pack(fill=tk.BOTH, expand=1)
