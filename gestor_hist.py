@@ -72,6 +72,12 @@ def registrar_o_actualizar_contrato(ticker_symbol, expiry_date, strike_price, ti
     """Consulta Yahoo Finance, evalúa cambios relevantes y actualiza la base de datos."""
     hoy = datetime.now().strftime('%Y-%m-%d')
     
+    # 1. BLOQUEO DE FINES DE SEMANA (Sábado = 5, Domingo = 6)
+    dia_semana = datetime.now().weekday()
+    if dia_semana >= 5:
+        print(f"\n[{hoy}] 🏖️ Mercado cerrado (Fin de semana). Omitiendo barrido para {ticker_symbol.upper()}.")
+        return True
+
     # Validar si el contrato ya expiró
     try:
         exp_dt = datetime.strptime(expiry_date, '%Y-%m-%d').date()
@@ -84,8 +90,9 @@ def registrar_o_actualizar_contrato(ticker_symbol, expiry_date, strike_price, ti
     print(f"\n[{hoy}] Actualizando seguimiento diario para {ticker_symbol.upper()} | {tipo_cp.upper()} Strike ${strike_price} (Exp: {expiry_date})...")
     
     try:
-        # 1. Obtener el registro previo de este contrato en el CSV para comparar cambios
+        # Obtener el registro previo de este contrato en el CSV
         oi_anterior = 0
+        datos_previos = pd.DataFrame()
         if os.path.exists(ARCHIVO_BASE_DATOS):
             df_hist_prev = pd.read_csv(ARCHIVO_BASE_DATOS)
             filtro_prev = (
@@ -96,10 +103,9 @@ def registrar_o_actualizar_contrato(ticker_symbol, expiry_date, strike_price, ti
             )
             datos_previos = df_hist_prev[filtro_prev]
             if not datos_previos.empty:
-                # Tomar el último Open Interest registrado antes de hoy
                 oi_anterior = int(datos_previos.iloc[-1]['Open Interest'])
 
-        # 2. Consultar datos frescos en Yahoo Finance
+        # Consultar datos frescos en Yahoo Finance
         t = yf.Ticker(ticker_symbol)
         opt_chain = t.option_chain(expiry_date)
         
@@ -117,24 +123,40 @@ def registrar_o_actualizar_contrato(ticker_symbol, expiry_date, strike_price, ti
         
         premium_diario = vol_actual * last_price * 100
         
-        # 3. Evaluar reglas de oportunidad / cambio relevante
+        # ==========================================
+        # VALIDACIÓN ANTIFANTASMA (MERCADO CERRADO / FERIADOS)
+        # ==========================================
+        if not datos_previos.empty:
+            ultimo_reg = datos_previos.iloc[-1]
+            ultimo_oi = int(ultimo_reg['Open Interest']) if pd.notna(ultimo_reg['Open Interest']) else 0
+            ultima_fecha = str(ultimo_reg['Trade Date']).split(' ')[0]
+
+            # Si ya se registró un dato hoy, omitir
+            if ultima_fecha == hoy:
+                print(f"ℹ️ Ya existe un registro para hoy ({hoy}). Omitiendo duplicado.")
+                return True
+
+            # Si el Open Interest es exactamente igual al del día anterior, 
+            # significa que no hubo sesión de compensación nueva (mercado cerrado / feriado / sin cambios).
+            if ultimo_oi == oi_actual:
+                print(f"ℹ️ El Open Interest no ha variado ({oi_actual}). Posible día sin actividad bursátil real. Omitiendo.")
+                return True
+
+        # Evaluar reglas de oportunidad
         variacion_oi = oi_actual - oi_anterior
         porc_cambio_oi = (variacion_oi / oi_anterior * 100) if oi_anterior > 0 else 0
         
         alerta_disparada = False
         razones_alerta = []
         
-        # Criterio A: Salto de Open Interest superior o igual al 10%
         if porc_cambio_oi >= 10.0 and oi_anterior > 500:
             alerta_disparada = True
             razones_alerta.append(f"📈 *Salto Institucional de OI:* +{porc_cambio_oi:.1f}% ({oi_anterior:,} ➡️ {oi_actual:,})")
             
-        # Criterio B: Volumen diario masivo o prima negociada inusual (> $200,000)
         if premium_diario >= 200_000 or vol_actual >= 5_000:
             alerta_disparada = True
             razones_alerta.append(f"💰 *Flujo Masivo Detectado:* Volumen de {vol_actual:,} contratos | Prima Diaria: ${premium_diario:,.2f}")
 
-        # Si se detecta oportunidad, disparar mensaje a Telegram
         if alerta_disparada:
             detalle_razones = "\n".join(razones_alerta)
             mensaje_telegram = (
@@ -146,28 +168,7 @@ def registrar_o_actualizar_contrato(ticker_symbol, expiry_date, strike_price, ti
             )
             enviar_alerta_telegram(mensaje_telegram)
 
-        # ==========================================
-        # VALIDACIÓN MEJORADA CONTRA MERCADO CERRADO / FERIADOS
-        # ==========================================
-        if not datos_previos.empty:
-            ultimo_reg = datos_previos.iloc[-1]
-            ultimo_oi = int(ultimo_reg['Open Interest']) if pd.notna(ultimo_reg['Open Interest']) else 0
-            ultimo_vol = int(ultimo_reg['Volume']) if pd.notna(ultimo_reg['Volume']) else 0
-            ultima_prima = float(ultimo_reg['Premium ($)']) if pd.notna(ultimo_reg['Premium ($)']) else 0.0
-            ultima_fecha = str(ultimo_reg['Trade Date']).split(' ')[0]
-
-            # 1. Si ya se guardó un registro para el día de hoy, se omite
-            if ultima_fecha == hoy:
-                print(f"ℹ️ Ya existe un registro para hoy ({hoy}). Omitiendo duplicado.")
-                return True
-
-            # 2. Si el mercado está cerrado (Feriado/Fin de semana) y tanto el OI, 
-            # el volumen como la prima no muestran actividad real nueva respecto al cierre previo:
-            if ultimo_oi == oi_actual and ultimo_vol == vol_actual and ultima_prima == round(premium_diario, 2):
-                print(f"ℹ️ Sin cambios en el mercado (posible día festivo/cerrado). Omitiendo.")
-                return True
-
-        # 4. Guardar registro en la base de datos
+        # Guardar registro limpio en la base de datos
         nuevo_registro = pd.DataFrame([{
             'Trade Date': hoy,
             'Ticker': ticker_symbol.upper(),
