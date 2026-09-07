@@ -5,6 +5,9 @@ import pandas as pd
 import yfinance as yf
 from datetime import datetime
 import matplotlib.pyplot as plt
+import tkinter as tk
+from tkinter import ttk
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
 ARCHIVO_BASE_DATOS = "contratos_seguidos_db.csv"
 
@@ -143,6 +146,25 @@ def registrar_o_actualizar_contrato(ticker_symbol, expiry_date, strike_price, ti
             )
             enviar_alerta_telegram(mensaje_telegram)
 
+        # ==========================================
+        # NUEVO: VALIDACIÓN PARA EVITAR REGISTROS DUPLICADOS
+        # ==========================================
+        if not datos_previos.empty:
+            ultimo_reg = datos_previos.iloc[-1]
+            ultimo_oi = int(ultimo_reg['Open Interest']) if pd.notna(ultimo_reg['Open Interest']) else 0
+            ultima_prima = float(ultimo_reg['Premium ($)']) if pd.notna(ultimo_reg['Premium ($)']) else 0.0
+            ultima_fecha = str(ultimo_reg['Trade Date']).split(' ')[0]
+
+            # 1. Si ya se guardó un registro para el día de hoy, se omite
+            if ultima_fecha == hoy:
+                print(f"ℹ️ Ya existe un registro para hoy ({hoy}). Omitiendo duplicado.")
+                return True
+
+            # 2. Si el mercado está cerrado y los valores son idénticos al último cierre, se omite
+            if ultimo_oi == oi_actual and ultima_prima == round(premium_diario, 2):
+                print(f"ℹ️ Sin cambios en OI ({oi_actual}) ni Prima (${premium_diario:,.2f}) respecto al último registro. Omitiendo por inactividad.")
+                return True
+
         # 4. Guardar registro en la base de datos
         nuevo_registro = pd.DataFrame([{
             'Trade Date': hoy,
@@ -265,6 +287,103 @@ def barrido_diario_contratos_seguidos():
     print("--- BARRIDO DIARIO FINALIZADO ---\n")
     enviar_alerta_telegram("🤖 *QuantR3 Bot*: Barrido diario completado y base de datos actualizada.")
 
+def graficar_todas_las_tendencias():
+    """Genera una vista multipanel con scroll vertical y fuentes optimizadas para todos los contratos."""
+    unicos = listar_contratos_unicos()
+    if unicos is None or unicos.empty:
+        print("\n⚠️ No hay contratos registrados para graficar.")
+        return
+
+    archivo_db = "contratos_seguidos_db.csv"
+    if not os.path.exists(archivo_db):
+        print("\n⚠️ No existe base de datos para graficar.")
+        return
+
+    df_db = pd.read_csv(archivo_db)
+    total_contratos = len(unicos)
+
+    # Altura dinámica: otorga 3.2 pulgadas de alto por cada contrato para evitar saturación
+    altura_figura = max(6, total_contratos * 3.2)
+
+    # Crear la figura con tamaños de fuente balanceados
+    fig, axes = plt.subplots(total_contratos, 1, figsize=(11, altura_figura), dpi=100, sharex=True)
+    if total_contratos == 1:
+        axes = [axes]
+
+    for ax1, (_, row) in zip(axes, unicos.iterrows()):
+        df_c = df_db[
+            (df_db['Ticker'] == row['Ticker']) & 
+            (df_db['Expiry'] == row['Expiry']) &
+            (df_db['Strike ($)'] == row['Strike ($)']) & 
+            (df_c_cp := (df_db['C/P'] == row['C/P'])) # Mantiene compatibilidad de filtrado
+        ].copy() if 'df_c_cp' else df_db[
+            (df_db['Ticker'] == row['Ticker']) & 
+            (df_db['Expiry'] == row['Expiry']) &
+            (df_db['Strike ($)'] == row['Strike ($)']) & 
+            (df_db['C/P'] == row['C/P'])
+        ].copy()
+        
+        if df_c.empty:
+            continue
+            
+        df_c['Trade Date'] = pd.to_datetime(df_c['Trade Date'])
+        df_c.sort_values('Trade Date', inplace=True)
+        
+        # Eje principal: Open Interest (Optimizado)
+        ax1.set_ylabel('Open Interest', color='#3182ce', fontweight='bold', fontsize=9)
+        ax1.plot(df_c['Trade Date'], df_c['Open Interest'], color='#3182ce', marker='o', linewidth=1.5, markersize=4)
+        ax1.tick_params(axis='y', labelcolor='#3182ce', labelsize=8)
+        ax1.tick_params(axis='x', labelsize=8)
+        ax1.grid(True, linestyle='--', alpha=0.4)
+        
+        # Eje secundario: Prima Diaria
+        ax2 = ax1.twinx()
+        ax2.set_ylabel('Prima ($)', color='#e53e3e', fontweight='bold', fontsize=9)
+        ax2.bar(df_c['Trade Date'], df_c['Premium ($)'], color='#e53e3e', alpha=0.35, width=0.5)
+        ax2.tick_params(axis='y', labelcolor='#e53e3e', labelsize=8)
+        
+        # Título compacto y legible por contrato
+        ax1.set_title(f'{row["Ticker"]} | {row["C/P"]} | Strike: ${row["Strike ($)"]} | Exp: {row["Expiry"]}', fontsize=10, fontweight='bold', pad=6)
+
+    axes[-1].set_xlabel('Fecha', fontweight='bold', fontsize=10)
+    fig.tight_layout()
+
+    # --- Interfaz Gráfica con Scrollbar (Tkinter) ---
+    root = tk.Tk()
+    root.title("Tendencias Históricas - Open Interest y Primas")
+    root.geometry("1100x750")
+
+    main_frame = tk.Frame(root)
+    main_frame.pack(fill=tk.BOTH, expand=1)
+
+    canvas_scroll = tk.Canvas(main_frame, highlightthickness=0)
+    scrollbar = ttk.Scrollbar(main_frame, orient=tk.VERTICAL, command=canvas_scroll.yview)
+    
+    scrollable_frame = tk.Frame(canvas_scroll)
+    scrollable_frame.bind(
+        "<Configure>",
+        lambda e: canvas_scroll.configure(scrollregion=canvas_scroll.bbox("all"))
+    )
+
+    canvas_scroll.create_window((0, 0), window=scrollable_frame, anchor="nw")
+    canvas_scroll.configure(yscrollcommand=scrollbar.set)
+
+    canvas_scroll.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+    scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+    # Incrustar la gráfica en el contenedor con scroll
+    canvas_agg = FigureCanvasTkAgg(fig, master=scrollable_frame)
+    canvas_agg.draw()
+    canvas_agg.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+    # Activar desplazamiento con la rueda del mouse
+    def _on_mousewheel(event):
+        canvas_scroll.yview_scroll(int(-1 * (event.delta / 120)), "units")
+    canvas_scroll.bind_all("<MouseWheel>", _on_mousewheel)
+
+    root.mainloop()
+    plt.close(fig) # Libera memoria al cerrar la ventana
+
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "barrido":
         barrido_diario_contratos_seguidos()
@@ -276,7 +395,7 @@ if __name__ == "__main__":
             print("3. Listar contratos bajo seguimiento")
             print("4. Eliminar un contrato de la base de datos")
             print("5. Graficar evolución histórica de un contrato")
-            print("6. Enviar mensaje de prueba a Telegram")
+            print("6. Graficar todas las tendencias de Open Interest de los contratos")
             print("7. Salir")
             
             opcion = input("\nSelecciona una opción (1-7): ").strip()
@@ -301,7 +420,7 @@ if __name__ == "__main__":
             elif opcion == "5":
                 graficar_contrato_interactivo()
             elif opcion == "6":
-                probar_telegram()
+                graficar_todas_las_tendencias()
             elif opcion == "7":
                 print("¡Hasta luego!")
                 break
