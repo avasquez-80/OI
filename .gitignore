@@ -1,0 +1,8 @@
+build/
+dist/
+Old/
+Run/
+Test/
+__pycache__/
+*.spec
+.DS_Store
