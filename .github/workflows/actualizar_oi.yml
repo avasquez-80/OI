@@ -1,6 +1,6 @@
 name: Actualizar Open Interest Diario
 
-on:
+'on':
   schedule:
     - cron: '30 21 * * 1-5'
   workflow_dispatch:
