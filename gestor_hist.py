@@ -264,6 +264,7 @@ def barrido_diario_contratos_seguidos():
             tipo_cp=row['C/P']
         )
     print("--- BARRIDO DIARIO FINALIZADO ---\n")
+    enviar_alerta_telegram("🤖 *QuantR3 Bot*: Barrido diario completado y base de datos actualizada.")
 
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "barrido":
