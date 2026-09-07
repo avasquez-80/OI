@@ -9,10 +9,10 @@ import matplotlib.pyplot as plt
 ARCHIVO_BASE_DATOS = "contratos_seguidos_db.csv"
 
 # Configuración de Telegram (Lee las credenciales de las variables de entorno del sistema o GitHub Secrets)
-# TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-# TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
-TELEGRAM_BOT_TOKEN = "8857766195:AAGqNrcByv-GFcsMMbUv74K7D9vsH7lNpuA"
-TELEGRAM_CHAT_ID = "1423591132"
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
+# TELEGRAM_BOT_TOKEN = "8857766195:AAGqNrcByv-GFcsMMbUv74K7D9vsH7lNpuA"
+# TELEGRAM_CHAT_ID = "1423591132"
 def enviar_alerta_telegram(mensaje):
     """Envía un mensaje de alerta a tu chat de Telegram de forma segura."""
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
