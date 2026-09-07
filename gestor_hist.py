@@ -8,13 +8,39 @@ import matplotlib.pyplot as plt
 import tkinter as tk
 from tkinter import ttk
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+import subprocess
 
 ARCHIVO_BASE_DATOS = "contratos_seguidos_db.csv"
 
 # Configuración de Telegram (Lee las credenciales de las variables de entorno del sistema o GitHub Secrets)
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
+def git_pull_automatico():
+    """Descarga automáticamente los cambios más recientes desde GitHub."""
+    try:
+        print("🔄 Sincronizando: Descargando cambios de la nube (git pull)...")
+        resultado = subprocess.run(["git", "pull"], capture_output=True, text=True, check=True)
+        print(resultado.stdout.strip())
+    except Exception as e:
+        print(f"⚠️ No se pudo sincronizar automáticamente con Git (pull): {e}")
 
+def git_push_automatico(mensaje="Actualización automática de base de datos"):
+    """Sube automáticamente el CSV actualizado a GitHub."""
+    try:
+        print("🔄 Sincronizando: Subiendo cambios a la nube (git push)...")
+        # Asegurar que solo se procesa el archivo de base de datos
+        subprocess.run(["git", "add", ARCHIVO_BASE_DATOS], check=True)
+        
+        # Verificar si hay cambios reales para confirmar
+        status = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True, check=True)
+        if ARCHIVO_BASE_DATOS in status.stdout:
+            subprocess.run(["git", "commit", "-m", mensaje], check=True)
+            subprocess.run(["git", "push"], check=True)
+            print("☁️ Base de datos sincronizada y respaldada en GitHub con éxito.")
+        else:
+            print("ℹ️ No hay cambios nuevos en la base de datos para subir.")
+    except Exception as e:
+        print(f"⚠️ No se pudo respaldar automáticamente en Git (push): {e}")
 def enviar_alerta_telegram(mensaje):
     """Envía un mensaje de alerta a tu chat de Telegram de forma segura."""
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
@@ -67,6 +93,8 @@ def importar_o_actualizar_historial(df_nuevo_lote):
 
     df_final.to_csv(ARCHIVO_BASE_DATOS, index=False)
     print(f"✅ Base de datos actualizada con éxito. Total de registros en la BD: {len(df_final)}")
+    # NUEVO: Sube automáticamente a la nube cada vez que el CSV cambia
+    git_push_automatico("Actualización automática de contratos vía script")
 
 def registrar_o_actualizar_contrato(ticker_symbol, expiry_date, strike_price, tipo_cp):
     """Consulta Yahoo Finance, evalúa cambios relevantes y actualiza la base de datos."""
@@ -395,6 +423,8 @@ def graficar_todas_las_tendencias():
     plt.close(fig) # Libera memoria al cerrar la ventana
 
 if __name__ == "__main__":
+    # Sincronizar al iniciar la ejecución localmente
+    git_pull_automatico()
     if len(sys.argv) > 1 and sys.argv[1] == "barrido":
         barrido_diario_contratos_seguidos()
     else:
